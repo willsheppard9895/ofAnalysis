@@ -19,6 +19,7 @@ allData <- allData %>%
 # 5532853 - Deuteranopia (color blind)
 # 5540429 - had cataract, still has film over left eye
 # 5658787 - Diabetic Retinopathy
+# 5384850 removed from data due to mistake in coding
 # leaves N of 55
 visProbs <- c(5508881, 5532853, 5540429, 5658787, 5384850)
 # create data frame where participants with visual issues are marked
