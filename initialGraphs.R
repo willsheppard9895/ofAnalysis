@@ -10,7 +10,7 @@ ofData$contrast <- as.factor(ofData$contrast)
 ofData$offset <- as.factor(ofData$offset)
 
 # plot a distribution of abs error by condition
-ggplot(ofData, aes(x = absError, colour = condition))+
+ggplot(ofData, aes(x = absAngError, colour = condition))+
   geom_density()+
   facet_wrap(offset~contrast)+
   scale_x_log10()
@@ -22,12 +22,29 @@ ggplot(ofData, aes(x = Reaction.Time, colour = condition))+
   scale_x_log10()
   
   
+ggplot(ofData, aes(x = contrast, y = absAngError, color = condition))+
+  geom_boxplot()
+filtData <- ofData %>%
+  group_by(condition, contrast)%>%
+  filter(absAngError < 1.96*sd(absAngError)+mean(absAngError))
+ggplot(filtData, aes(x = contrast, y = absAngError, color = condition))+
+  geom_boxplot()
 # look at interction
   
-ggplot(ofData, aes(x = contrast, y = absError, color = condition, group = condition))+
+ggplot(ofData, aes(x = contrast, y = absAngError, color = condition, group = condition))+
   stat_summary(fun.y = mean, geom = "point") +
-  stat_summary(fun.y = mean, geom = "line")#+
+  stat_summary(fun.y = mean, geom = "line")+
+  scale_x_discrete(labels = c("Low", "Medium", "High"),
+                   name = "Contrast") +
+  scale_y_continuous(name = "Absolute Error (degrees)")
   #facet_grid(~offset)
+ggplot(filtData, aes(x = contrast, y = absAngError, color = condition, group = condition))+
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.y = mean, geom = "line")+
+  scale_x_discrete(labels = c("Low", "Medium", "High"),
+                   name = "Contrast") +
+  scale_y_continuous(name = "Absolute Error (degrees)")
+#facet_grid(~offset)
 
 ggplot(ofData, aes(x = offset, y = absError, color = condition, group = condition))+
   stat_summary(fun.y = mean, geom = "point") +
@@ -43,7 +60,7 @@ ggplot(ofData, aes(x = contrast, y = Reaction.Time, color = condition, group = c
   stat_summary(fun.y = mean, geom = "point") +
   stat_summary(fun.y = mean, geom = "line")
 
-ggplot(ofData, aes(x = offset , y = absError, fill = condition))+
+ggplot(ofData, aes(x = offset , y = absAngError, fill = condition))+
   geom_bar(stat="identity", position=position_dodge())+
   #geom_errorbar()+
   facet_grid(~contrast)
