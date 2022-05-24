@@ -2,50 +2,25 @@ library(tidyverse)
 library(rstatix)
 
 # import data
-allData <- read_csv("../testData/ofData.csv")
-allVA <- read_csv("../testData/va.csv")
-allCS <- read_csv("../testData/cs.csv")
+#allData <- read_csv("../cleanData/taskData.csv")
+
+# set iamge characteristics
+colors <- c("#d5277b", "#279e90")
+h = 4
+widthOF = 8
+w = 5
+d = 800
+labels = c("Blur", "No blur")
+# seperate tasks
+allOF <- read_csv("../cleanData/ofData.csv")
+allVA <- read_csv("../cleanData/vaThresh.csv")
+allCS <- read_csv("../cleanData/csThresh.csv")
 
 #read target coordinates
 coordinates <- read_csv("../opticFlowOffsets.csv")
 
-# create absolute offset variable
-allData <- allData %>%
-  mutate(absOffset = abs(offset))
-
-# Participants 5384850 has been removed due to issues with coding
-## Check participants with medical condition vs general trend
-# 5508881 - cataracts
-# 5532853 - Deuteranopia (color blind)
-# 5540429 - had cataract, still has film over left eye
-# 5658787 - Diabetic Retinopathy
-# 5384850 removed from data due to mistake in coding
-# leaves N of 55
-visProbs <- c(5508881, 5532853, 5540429, 5658787, 5384850)
-# create data frame where participants with visual issues are marked
-probData <- allData %>%
-  mutate(prob = case_when(
-    Participant.Private.ID %in% visProbs ~ 1,
-    TRUE ~ 0
-  ))
-# look at descriptive stats for the groups
-probData %>%
-  group_by(prob) %>%
-  get_summary_stats(absAngError, type = "mean_sd")
-
-# calculate t score
-stat.test <- probData %>%
-  t_test(absAngError ~ prob) %>%
-  add_significance()
-stat.test
-
-# participants with self reported visual problems had a sig. higher absAngError
-# therefore remove
-data <- subset(allData, !(Participant.Private.ID %in% visProbs))
-
-
 ## plot data on xy axis
-ggplot(data = allData, aes(x = X.Coordinate, y = Y.Coordinate, 
+ggplot(data = allOF, aes(x = X.Coordinate, y = Y.Coordinate, 
                         color = absOffset, fill = absOffset))+
   geom_point(alpha = 0.3)+
   scale_x_continuous(limits = c(0, 640))+
@@ -65,11 +40,11 @@ ggplot(data = allData, aes(x = X.Coordinate, y = Y.Coordinate,
   coord_equal()
 
 # create extreme y variables
-ymax <- mean(data$Y.Coordinate)+2*sd(data$Y.Coordinate)
-ymin <- mean(data$Y.Coordinate)-2*sd(data$Y.Coordinate)
+ymax <- mean(allOF$Y.Coordinate)+2*sd(allOF$Y.Coordinate)
+ymin <- mean(allOF$Y.Coordinate)-2*sd(allOF$Y.Coordinate)
 
 # remove participants with extreme y values
-data <- data %>%
+data <- allOF %>%
   filter(Y.Coordinate < ymax) %>%
   filter(Y.Coordinate > ymin)
 
@@ -128,16 +103,40 @@ ggplot(data = data, aes(x = X.Coordinate, y = Y.Coordinate,
 
 # make contrast a factor
 data$contrast <- as.factor(data$contrast)
-
+data$contrast <- factor(data$contrast, levels = c("Low", "Medium", "High"))
 
 # plot the interaction
-ggplot(data = data, aes(x = contrast, y = absAngError, color = condition, group = condition))+
+ofPlot <- ggplot(data = data, aes(x = contrast, y = absAngError, color = condition, group = condition))+
   stat_summary(fun.y = mean, geom = "point") +
   stat_summary(fun.y = mean, geom = "line")+
   scale_x_discrete(labels = c("10" = "Low", "50" = "Medium", "100" = "High"),
                    name = "Contrast") +
   scale_y_continuous(name = "Absolute Error (degrees)",
-                     breaks = c(4, 6, 8, 10, 12))
+                     breaks = c(4, 6, 8, 10, 12))+
+  scale_color_manual(values = colors, 
+                     labels = labels,
+                     name = "Condition")
+show(ofPlot)
+
+ggsave(plot = ofPlot, 
+       "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/ofPlot.png",
+       dpi = d,
+       height = h,
+       width = widthOF)
+
+
+errorAov <- aov(absAngError ~ condition * contrast, data = data)
+summary(errorAov)
+
+postHoc <- TukeyHSD(errorAov)
+print(postHoc)
+#                               diff       lwr        upr        p adj
+#clear:Low-blur:Low       -2.1413155 -2.652572 -1.6300594 0.000000e+00
+#clear:Medium-blur:Medium -0.1295950 -0.638863  0.3796730 9.788989e-01
+#clear:High-blur:High      0.1191575 -0.391287  0.6296020 9.856646e-01
+
+# create linear models
+
 
 # MLM
 
@@ -193,102 +192,146 @@ intModelSummary <- broom.mixed::tidy(blurInt)
 
 
 #### process va thresh data
-va <- subset(allVA, !(Participant.Private.ID %in% visProbs))
-
-# replace na's with 0s
-va[is.na(va)] <- 0
-
-# calculate threshold using method similar to letterwise scoring
-threshVA <- va %>%
-  group_by(Participant.Private.ID)%>%
-  summarise(blurTotalCorrect = sum(blurPercCorrect),
-            clearTotalCorrect = sum(clearPercCorrect))%>%
-  summarise(Participant.Private.ID = Participant.Private.ID,
-            blurVA = round(1.1 - blurTotalCorrect/10, digits = 2),
-            clearVA = round(1.1 - clearTotalCorrect/10, digits = 2))
-
-# pivot longer
-threshVA <- threshVA %>%
-  pivot_longer(!Participant.Private.ID, names_to = "condition", values_to = "threshold")%>%
-  mutate(condition = case_when(
-    condition == "blurVA" ~ "blur",
-    TRUE ~ "clear"
-  ))
-
-vaPlot <- ggplot(threshVA, aes(x = condition, group = condition, y = threshold))+
+vaPlot <- ggplot(allVA, aes(x = condition, group = condition, y = threshold, color = condition))+
   geom_boxplot()+
   geom_hline(yintercept = 0.176, linetype="dashed", color = "red", size = 1)+ 
   geom_text(aes(0.6, 0.176, label = "6/9", vjust = -1))+
   geom_hline(yintercept = 0.3, linetype="dashed", color = "red", size = 1)+ 
   geom_text(aes(0.6, 0.3, label = "6/12", vjust = -1))+
-  scale_y_continuous(name = "VA detection threshold (logMAR)")+
-  scale_x_discrete(name = "Condition")
+  scale_y_continuous(name = "Visual Acuity (logMAR)")+
+  scale_x_discrete(name = "Condition", labels = labels)+
+  scale_color_manual(values = colors, 
+                     name = "Condition", 
+                     labels = labels)
   
 show(vaPlot)
 ggsave(plot = vaPlot, 
        "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/vaPlot.png",
-       dpi = 800)
+       dpi = d,
+       width = w,
+       height = h)
 
 # look at descriptive stats for the groups
-threshVA %>%
+allVA %>%
   group_by(condition) %>%
   get_summary_stats(threshold, type = "mean_sd")
 
 # calculate t score
-va.test <- threshVA %>%
-  t_test(threshold ~ condition) %>%
+va.test <- allVA %>%
+  t_test(threshold ~ condition, paired = TRUE) %>%
   add_significance()
 va.test
 
 
 
 ###### Process CS thresh data
-cs <- subset(allCS, !(Participant.Private.ID %in% visProbs))
 
-# pivot longer
-cs <- cs %>%
-  pivot_longer(cols = c(blurPercCorrect, clearPercCorrect),
-               names_to = "condition", values_to = "percCorrect",
-               values_drop_na = TRUE)%>%
-  mutate(condition = case_when(
-    condition == "blurPercCorrect" ~ "blur",
-    TRUE ~ "clear"
-  ))
+allCS <- allCS %>%
+  mutate(CS = -log10(1/threshold))
 
-# order by participant, then condition, then contrast
-cs <- cs %>%
-  arrange(Participant.Private.ID, condition, -Contrast)
-
-# remove contrasts when perc correct is less than 50%
-cs <- cs %>%
-  filter(percCorrect >= .5)
-
-# choose lowest value as threshold
-# Participant 5372572 has threshold of 52 for blur
-# Participant 5384675 has threshold of 26 for clear
-threshCS <- cs %>%
-  group_by(Participant.Private.ID, condition) %>%
-  summarise(threshold = min(Contrast))
-
-csPlot <- ggplot(threshCS, aes(x = condition, y = threshold))+
+csPlot <- ggplot(allCS, aes(x = condition, y = CS, color = condition))+
   geom_boxplot()+
-  scale_y_log10(name = "Contrast detection threshold (%)")+
-  scale_x_discrete(name = "Condition")
+  scale_y_continuous(name = "Log Contrast Sensitivity")+
+  scale_x_discrete(name = "Condition", labels = labels)+
+  scale_color_manual(values = colors, 
+                     labels = labels, 
+                     name = "Condition")
 
 show(csPlot)
 ggsave(plot = csPlot, 
        "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/csPlot.png",
-       dpi = 800)
+       dpi = d,
+       width = w,
+       height = h)
 
 # look at descriptive stats for the groups
-threshCS %>%
+allCS %>%
   group_by(condition) %>%
-  get_summary_stats(threshold, type = "mean_sd")
+  get_summary_stats(CS, type = "mean_sd")
 
 # calculate t score
-cs.test <- threshCS %>%
-  t_test(threshold ~ condition) %>%
+cs.test <- allCS %>%
+  t_test(CS ~ condition, paired = TRUE) %>%
   add_significance()
 cs.test
 
-t.test(threshold ~ condition, data = threshCS, paired = TRUE)
+# create a single data frame with CS, VA, condition and error score
+summaryDF <- data %>%
+  group_by(Participant.Private.ID, condition)%>%
+  summarise(meanAngError = mean(absAngError))
+
+# merge in VA and CS thresholds
+summaryDF <- merge(summaryDF, allCS)%>%
+  select(-threshold)
+summaryDF <- merge(summaryDF, allVA)
+summaryDF$VA <- summaryDF$threshold 
+
+summaryDF <- summaryDF%>%
+  select(-threshold)
+
+# create linear model
+lmVision <- lm(meanAngError ~ condition + CS + VA, data = summaryDF)
+summary(lmVision)
+
+csError <- ggplot(summaryDF, aes(x= CS, y = meanAngError))+
+  geom_jitter(aes(color = condition))+
+  geom_smooth(method = "lm")+
+  scale_color_manual(values = colors, 
+                     labels = labels,
+                     name = "Condition")+
+  scale_y_continuous(name = "Mean Angular Error (degrees)")+
+  scale_x_continuous(name = "Log Contrast Sensitivity")
+show(csError)
+
+ggsave(plot = csError, 
+       "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/csError.png",
+       dpi = d,
+       width = 6,
+       height = h)
+
+vaError <- ggplot(summaryDF, aes(x= VA, y = meanAngError))+
+  geom_point(aes(color = condition))+
+  geom_smooth(method = "lm")+
+  scale_color_manual(values = colors,
+                     labels = labels,
+                     name = "Condition")+
+  scale_y_continuous(name = "Mean Angular Error (degrees)")+
+  scale_x_continuous(name = "Visual Acuity (logMAR)")
+show(vaError)
+
+ggsave(plot = vaError, 
+       "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/vaError.png",
+       dpi = d,
+       width = 6,
+       height = h)
+
+# create MLM
+base <- nlme::lme(
+  fixed = meanAngError ~ 1,
+  random = ~1|Participant.Private.ID,
+  data = summaryDF, na.action=na.omit
+)
+
+cond <- nlme::lme(
+  fixed = meanAngError ~ condition,
+  random = ~1|Participant.Private.ID,
+  data = summaryDF, na.action=na.omit
+) 
+
+cs <- nlme::lme(
+  fixed = meanAngError ~ condition + CS,
+  random = ~1|Participant.Private.ID,
+  data = summaryDF, na.action=na.omit
+)
+
+va <- nlme::lme(
+  fixed = meanAngError ~ condition + CS + VA,
+  random = ~1|Participant.Private.ID,
+  data = summaryDF, na.action=na.omit
+)
+
+anova(base, cond, cs, va)
+
+ggplot(summaryDF, aes(x = VA, y = meanAngError, colour = condition))+
+  geom_point()+
+  geom_smooth(method = "lm")
