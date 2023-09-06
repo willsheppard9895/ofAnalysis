@@ -17,10 +17,16 @@ files <- c("task-d4fw", "task-dqjp", "task-f3ud", "task-mva3", "task-oex3",
            "task-og71", "task-rek9", "task-s8ch", "task-svji", "task-z5dj")
 for(i in files){
   filepath <- file.path("../data/",paste("data_exp_62188-v20_",i,".csv",sep=""))
-  assign(i, read_csv(filepath))
+  assign(i, read.csv(filepath))
 }
+
+# make reaction time variables numeric
+`task-d4fw`$Reaction.Time <- as.numeric(`task-d4fw`$Reaction.Time)
+`task-d4fw`$X.Coordinate <- as.numeric(`task-d4fw`$X.Coordinate)
+`task-d4fw`$Y.Coordinate <- as.numeric(`task-d4fw`$Y.Coordinate)
+`task-d4fw`$Timed.Out <- as.numeric(`task-d4fw`$Timed.Out)
 #read target coordinates
-coordinates <- read_csv("../opticFlowOffsets.csv")
+coordinates <- read.csv("../opticFlowOffsets.csv")
 
 # read demographcics data
 demoData <- read.csv("../studentData/studentDemographicsWide.csv")

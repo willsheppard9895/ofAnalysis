@@ -1,0 +1,46 @@
+---
+title: "Participants who perform better with blur"
+author: "Will Sheppard"
+date: "2023-06-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+
+library(tidyverse)
+
+```
+
+```{r data}
+
+d <- read.csv("../cleanData/mlmData.csv") %>%
+  group_by(Participant.Private.ID, conditionText)%>%
+  dplyr::summarise(error = mean(absAngError))%>%
+  pivot_wider(names_from = conditionText, values_from = error)%>%
+  filter(blur < clear)
+
+blurry <- unique(d$Participant.Private.ID)
+
+demo <- read.csv("../studentData/studentDemographicsWideEdit.csv")%>%
+  filter(Participant.Private.ID %in% blurry)
+
+```
+
+```{r inquest}
+allLensData <- read.csv("../cleanData/taskData.csv")
+
+lensData <- allLensData%>%
+  filter(Participant.Private.ID %in% blurry)%>%
+  filter(display == "lens1")%>%
+  select(Participant.Private.ID, display, Response)
+
+joinedDF <- full_join(demo, lensData)
+joinedDF <- full_join(d, joinedDF)
+monoFirst <- joinedDF %>%
+  filter(Response == 'Monocular blur')
+
+```

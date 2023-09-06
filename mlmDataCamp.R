@@ -21,4 +21,4 @@ ggplot(mod, aes(x = condition, y = absAngError))+
 # buidl a mixed effecs model
 lmer1 <- lmer(absAngError ~ condition * contrast + (1|Participant.Private.ID), data = ofData)
 summary(lmer1)
-tidy(lmer1)
+tidy.table(lmer1)

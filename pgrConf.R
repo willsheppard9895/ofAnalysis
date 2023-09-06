@@ -105,6 +105,13 @@ ggplot(data = data, aes(x = X.Coordinate, y = Y.Coordinate,
 data$contrast <- as.factor(data$contrast)
 data$contrast <- factor(data$contrast, levels = c("Low", "Medium", "High"))
 
+ci <- data %>%
+  group_by(condition, contrast)%>%
+  summarise(mean = mean(absAngError),
+            sd = sd(absAngError))%>%
+  mutate(ciWidth = 1.96*(sd/sqrt(length(unique(data$Participant.Private.ID)))))
+
+
 # plot the interaction
 ofPlot <- ggplot(data = data, aes(x = contrast, y = absAngError, color = condition, group = condition))+
   stat_summary(fun.y = mean, geom = "point") +
@@ -118,8 +125,27 @@ ofPlot <- ggplot(data = data, aes(x = contrast, y = absAngError, color = conditi
                      name = "Condition")
 show(ofPlot)
 
+ofEBplot <- ggplot(data = ci, aes(x = contrast, y = mean, color = condition, group = condition))+
+  stat_summary(fun.y = mean, geom = "point") +
+  stat_summary(fun.y = mean, geom = "line")+
+  scale_x_discrete(labels = c("10" = "Low", "50" = "Medium", "100" = "High"),
+                   name = "Contrast") +
+  scale_y_continuous(name = "Absolute Error (degrees)",
+                     breaks = c(4, 6, 8, 10, 12))+
+  scale_color_manual(values = colors, 
+                     labels = labels,
+                     name = "Condition")+
+  geom_errorbar(aes(ymin=mean-ciWidth, ymax=mean+ciWidth), width=.1,
+                position=position_dodge(0.05))
+
 ggsave(plot = ofPlot, 
        "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/ofPlot.png",
+       dpi = d,
+       height = h,
+       width = widthOF)
+
+ggsave(plot = ofEBplot, 
+       "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/ofPlotErrorB.png",
        dpi = d,
        height = h,
        width = widthOF)
@@ -138,58 +164,6 @@ print(postHoc)
 # create linear models
 
 
-# MLM
-
-# make variables factors
-data$contrast <- as.factor(data$contrast)
-data$condition <- as.factor(data$condition)
-
-# Fixed effects: condition, contrast - we can make a priori predicitons about the direction of these effects, so are not random
-# Random effects: Person - no idea what the persons 
-# specify contrast - 100% as base
-levels(data$contrast)
-contrasts(data$contrast) <- contr.treatment(3, base = 3)
-
-# specify clear as base
-levels(data$condition)
-contrasts(data$condition) <- contr.treatment(2, base = 2)
-
-
-## build models
-# random intercept
-blurBase <- nlme::lme(
-  fixed = absAngError ~ 1,
-  random = ~1|Participant.Private.ID,
-  data = data, na.action=na.omit
-)
-
-# add blur condition as a fixed effect
-blurCond <- nlme::lme(
-  fixed = absAngError ~ condition,
-  random = ~1|Participant.Private.ID,
-  data = data, na.action=na.omit
-)
-
-# add contrast as a fixed effect
-blurCont <- nlme::lme(
-  fixed = absAngError ~ condition + contrast,
-  random = ~1|Participant.Private.ID,
-  data = data, na.action=na.omit
-)
-# add an interaction effect
-blurInt <- nlme::lme(
-  fixed = absAngError ~ condition + contrast + condition:contrast,
-  random = ~1|Participant.Private.ID,
-  data = data, na.action=na.omit
-)
-
-# Compare models
-anova(blurBase, blurCond, blurCont, blurInt)
-
-# look at contrasts
-library(broom.mixed)
-intModelSummary <- broom.mixed::tidy(blurInt)
-
 
 #### process va thresh data
 vaPlot <- ggplot(allVA, aes(x = condition, group = condition, y = threshold, color = condition))+
@@ -197,7 +171,7 @@ vaPlot <- ggplot(allVA, aes(x = condition, group = condition, y = threshold, col
   geom_hline(yintercept = 0.176, linetype="dashed", color = "red", size = 1)+ 
   geom_text(aes(0.6, 0.176, label = "6/9", vjust = -1))+
   geom_hline(yintercept = 0.3, linetype="dashed", color = "red", size = 1)+ 
-  geom_text(aes(0.6, 0.3, label = "6/12", vjust = -1))+
+  geom_text(aes(0.6, 0.29, label = "6/12", vjust = -1))+
   scale_y_continuous(name = "Visual Acuity (logMAR)")+
   scale_x_discrete(name = "Condition", labels = labels)+
   scale_color_manual(values = colors, 
@@ -206,7 +180,7 @@ vaPlot <- ggplot(allVA, aes(x = condition, group = condition, y = threshold, col
   
 show(vaPlot)
 ggsave(plot = vaPlot, 
-       "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/vaPlot.png",
+       "C:/Users/cn13ws/OneDrive - University of Leeds/kvm/vaPlot.png",
        dpi = d,
        width = w,
        height = h)
@@ -226,8 +200,6 @@ va.test
 
 ###### Process CS thresh data
 
-allCS <- allCS %>%
-  mutate(CS = -log10(1/threshold))
 
 csPlot <- ggplot(allCS, aes(x = condition, y = CS, color = condition))+
   geom_boxplot()+
@@ -239,7 +211,7 @@ csPlot <- ggplot(allCS, aes(x = condition, y = CS, color = condition))+
 
 show(csPlot)
 ggsave(plot = csPlot, 
-       "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/csPlot.png",
+       "C:/Users/cn13ws/OneDrive - University of Leeds/kvm/csPlot.png",
        dpi = d,
        width = w,
        height = h)
@@ -255,14 +227,19 @@ cs.test <- allCS %>%
   add_significance()
 cs.test
 
+
+# change id to Participant.Private.ID
+allCS <- allCS %>%
+  rename(Participant.Private.ID = id)
+
 # create a single data frame with CS, VA, condition and error score
 summaryDF <- data %>%
   group_by(Participant.Private.ID, condition)%>%
   summarise(meanAngError = mean(absAngError))
 
 # merge in VA and CS thresholds
-summaryDF <- merge(summaryDF, allCS)%>%
-  select(-threshold)
+summaryDF <- merge(summaryDF, allCS)#%>%
+  #select(-threshold)
 summaryDF <- merge(summaryDF, allVA)
 summaryDF$VA <- summaryDF$threshold 
 
@@ -284,7 +261,7 @@ csError <- ggplot(summaryDF, aes(x= CS, y = meanAngError))+
 show(csError)
 
 ggsave(plot = csError, 
-       "C:/Users/cn13ws/OneDrive - University of Leeds/pgrConference/csError.png",
+       "C:/Users/cn13ws/OneDrive - University of Leeds/KVM/csError.png",
        dpi = d,
        width = 6,
        height = h)
@@ -305,33 +282,12 @@ ggsave(plot = vaError,
        width = 6,
        height = h)
 
-# create MLM
-base <- nlme::lme(
-  fixed = meanAngError ~ 1,
-  random = ~1|Participant.Private.ID,
-  data = summaryDF, na.action=na.omit
-)
-
-cond <- nlme::lme(
-  fixed = meanAngError ~ condition,
-  random = ~1|Participant.Private.ID,
-  data = summaryDF, na.action=na.omit
-) 
-
-cs <- nlme::lme(
-  fixed = meanAngError ~ condition + CS,
-  random = ~1|Participant.Private.ID,
-  data = summaryDF, na.action=na.omit
-)
-
-va <- nlme::lme(
-  fixed = meanAngError ~ condition + CS + VA,
-  random = ~1|Participant.Private.ID,
-  data = summaryDF, na.action=na.omit
-)
-
-anova(base, cond, cs, va)
 
 ggplot(summaryDF, aes(x = VA, y = meanAngError, colour = condition))+
   geom_point()+
   geom_smooth(method = "lm")
+
+corDF <- summaryDF%>%select(meanAngError, CS, VA)
+
+cor.test(summaryDF$meanAngError, summaryDF$CS)
+cor.test(summaryDF$meanAngError, summaryDF$VA)

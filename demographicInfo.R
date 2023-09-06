@@ -35,3 +35,10 @@ edu$perc <- (edu$n/length(pps))*100
 # do participants click on the horizon
 mean(cleanData$Y.Coordinate, na.rm = TRUE)
 sd(cleanData$Y.Coordinate, na.rm = TRUE)
+
+## how many os were used?
+unique(demoAll$Participant.OS)
+unique(demoAll$Participant.Monitor.Size)
+unique(demoAll[c("Participant.OS","Participant.Monitor.Size")])
+unique(demoAll[c("Participant.OS","Participant.Viewport.Size")])
+demoAll$Participant.Viewport.Size

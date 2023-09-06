@@ -1,8 +1,30 @@
 library(tidyverse)
 library(car)
 
+# import functions
+source('functions_visionProcessing_and_threshEstimation.R')
+
 # import data
-allData <- read_csv("../testData/cs.csv")
+allData <- read_csv("../cleanData/cs.csv")
+
+# rename columns to match the function
+allData <- allData %>%
+  rename(id = Participant.Private.ID)
+
+#separate blur and clear data
+blurData <- allData %>%
+  filter(condition == 'blur')
+clearData <- allData %>%
+  filter(condition == 'clear')
+
+
+# calculate cs Thresholds
+csBlur <- precThreshCS(blurData, colName = 'csBlur')
+csClear <- precThreshCS(clearData, colName = 'csClear')
+
+# merge dataframes
+cs <- full_join(csBlur, csClear, by = 'id')
+
 
 # create fail column
 allData <- allData %>%
@@ -17,20 +39,24 @@ allData <- allData %>%
 
 # create a failure data frame
 blurData <- allData %>%
-  filter(blurFail == 1)%>%
+  filter(blurFail == 0)%>%
   select(-clearFail, - clearPercCorrect)
 clearData <- allData %>%
-  filter(clearFail == 1)%>%
+  filter(clearFail == 0)%>%
   select(-blurFail, -blurPercCorrect)
+
+# remove rows with NAs
+blurData <- blurData[complete.cases(blurData),]
+clearData <- clearData[complete.cases(clearData),]
 
 # indicate which column each particapnt fails on
 blurThresholds <- blurData %>%
   group_by(Participant.Private.ID) %>%
-  summarise(blurThreshold = first(Contrast))
+  summarise(blurThreshold = min(Contrast))
 
 clearThresholds <- clearData %>%
   group_by(Participant.Private.ID) %>%
-  summarise(clearThreshold = first(Contrast))
+  summarise(clearThreshold = min(Contrast))
 
 # merge data frames
 thresholds <- merge(blurThresholds, clearThresholds, by = c("Participant.Private.ID"), all = TRUE)

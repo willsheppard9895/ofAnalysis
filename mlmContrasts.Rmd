@@ -1,0 +1,220 @@
+---
+title: "mlmContrasts"
+author: "Will Sheppard"
+date: "2023-06-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(nlme)
+library(broom)
+
+```
+
+```{r data, include=FALSE}
+
+d <- read.csv("../cleanData/mlmData.csv")%>%
+  select(-X, -contrastHigh)%>%
+  mutate(degraded = case_when(
+    contrast == "High" ~ -2/3,
+    TRUE ~ 1/3
+  ))%>%
+  mutate(lowContrast = case_when(
+    contrast == "High" ~ 0,
+    contrast == "Medium" ~ -1/2,
+    contrast == "Low" ~ 1/2
+  ))
+
+d$contrast <- as.factor(d$contrast)
+```
+
+```{r contrasts}
+levels(d$contrast)
+
+high_vs_degraded <- c(-2/3, 1/3, 1/3)
+low_vs_medium <- c(0, 1/2, -1/2)
+
+contrasts(d$contrast) <- cbind(high_vs_degraded, low_vs_medium)
+```
+
+```{r lm}
+angError_lm <- lm(absAngError ~ condition + contrast + condition*contrast, data = d)
+broom::tidy(angError_lm, conf.int = T)
+
+```
+
+```{r mlm}
+angError_mlm <- lme(absAngError ~ condition + contrast+ condition:contrast, 
+       data = d,
+       random = ~1|Participant.Private.ID,
+       method = 'ML',
+       control =list(msMaxIter = 1000, msMaxEval = 1000))
+summary(angError_mlm)
+
+
+
+```
+
+```{r mlm slope}
+angError_slope <- lme(absAngError ~ condition + contrast+ condition:contrast, 
+       data = d,
+       random = ~condition|Participant.Private.ID,
+       method = 'ML',
+       control =list(msMaxIter = 1000, msMaxEval = 1000))
+
+anova(angError_mlm, angError_slope)
+summary(angError_slope)
+modelComp <- intervals(angError_slope)
+modelComp
+
+```
+
+```{r degraded plots}
+deg <- d %>%
+  select(Participant.Private.ID, conditionText, contrast, absAngError)%>%
+  mutate(degraded = case_when(
+    contrast == "High" ~ "Full flow",
+    TRUE ~ "Degraded flow"
+  ))%>%
+  rename(condition = conditionText)
+
+lineType <- c("twodash", "solid")
+labels <- c("Blur", "Clear")
+
+deg$degraded <- as.factor(deg$degraded)
+
+ciDeg <- deg %>%
+  group_by(condition, degraded)%>%
+  summarise(mean = mean(absAngError),
+            sd = sd(absAngError))%>%
+  mutate(se = (sd/sqrt(length(unique(deg$Participant.Private.ID)))))%>%
+  mutate(min = mean-se,
+         max = mean + se)
+
+ciDeg$condition <- as.factor(ciDeg$condition)
+
+degPlot <- ggplot(data = ciDeg, aes(x = degraded, y = mean, group = condition))+
+  stat_summary(fun = mean, geom = "point") +
+  stat_summary(fun = mean, geom = "line", aes(linetype = condition))+
+  scale_y_continuous(name = "Absolute Error (degrees)",
+                     breaks = c(4, 6, 8, 10),
+                     limits = c(3, 11))+
+  scale_linetype_manual(values = lineType, 
+                     labels = labels,
+                     name = "Condition")+
+  geom_errorbar(data = ciDeg,
+                aes(ymin = min, ymax = max),
+                width=.1,
+                position=position_dodge(0.07))+
+  theme(axis.title.x = element_blank())
+
+show(degPlot)
+
+```
+
+```{r save deg}
+
+dpi = 800
+h = 4
+w = 7
+
+ggsave("../figures/degradedPlot.png",
+       plot = degPlot,
+       dpi = dpi,
+       height = h,
+       width = w)
+```
+
+```{r low contrast plots}
+lc <- d %>%
+  select(Participant.Private.ID, conditionText, contrast, absAngError)%>%
+  filter(contrast != "High")%>%
+  mutate(contrast = case_when(
+    contrast == "Low" ~ "Highly degraded flow",
+    contrast == "Medium" ~ "Slightly degraded flow"
+  ))%>%
+  rename(condition = conditionText)
+
+lineType <- c("twodash", "solid")
+labels <- c("Blur", "Clear")
+
+ciLc <- lc %>%
+  group_by(condition, contrast)%>%
+  summarise(mean = mean(absAngError),
+            sd = sd(absAngError))%>%
+  mutate(se = (sd/sqrt(length(unique(deg$Participant.Private.ID)))))%>%
+  mutate(min = mean-se,
+         max = mean + se)
+
+lcPlot <-ggplot(data = ciLc, aes(x = contrast, y = mean, group = condition))+
+  stat_summary(fun = mean, geom = "point") +
+  stat_summary(fun = mean, geom = "line", aes(linetype = condition))+
+  scale_y_continuous(name = "Absolute Error (degrees)",
+                     breaks = c(6, 8, 10, 12, 14),
+                     limits = c(4.5, 15.5))+
+  scale_linetype_manual(values = lineType, 
+                     labels = labels,
+                     name = "Condition")+
+  geom_errorbar(data = ciLc,
+                aes(ymin = min, ymax = max),
+                width=.1,
+                position=position_dodge(0.07))+
+  theme(axis.title.x = element_blank())
+
+```
+
+```{r save lc}
+ggsave("../figures/lowContrastPlot.png",
+       plot = lcPlot,
+       dpi = dpi,
+       height = h,
+       width = w)
+```
+
+```{r combine plots}
+require(ggpubr)
+
+arrPlots <- ggarrange(degPlot, lcPlot,
+          labels = c("A", "B"),
+          ncol = 1,
+          nrow = 2)
+
+ggsave("../figures/arrangedPlot.png",
+       plot = arrPlots,
+       dpi = dpi,
+       height = 2*h,
+       width = w)
+
+```
+
+
+```{r norm dist}
+
+ggplot(d, aes(x = absAngError, color = contrast))+
+  geom_density()+facet_grid(~condition)
+```
+
+```{r hp alt models}
+
+angError_slope <- lme(absAngError ~ condition + contrast+ condition:contrast, 
+       data = d,
+       random = ~condition|Participant.Private.ID,
+       method = 'ML',
+       control =list(msMaxIter = 1000, msMaxEval = 1000))
+
+hpGaussian <- lmer(absAngError ~condition + contrast+ condition*contrast + (1+condition|Participant.Private.ID),
+                   data = d)
+summary(hpGaussian)
+AIC(hpGaussian)
+
+hpGamma <- glmer(absAngError ~ condition + contrast+ condition*contrast + (1+condition|Participant.Private.ID),
+                 family = Gamma(link = "identity"),
+                   data = d)
+
+```
+
