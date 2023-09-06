@@ -9,22 +9,381 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+load initial libraries for data manipulation
+don't load modelling packages yet, MASS interrupts dplyr
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r libraries}
+library(tidyverse)
+```
+This script computes and compares multilevel models for the heading perception data
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+Fixed factors: condition, contrast, contrast*condition, cs, va
+random intercepts: id, res
+random slope: condition (with in id)
 
-```{r cars}
-summary(cars)
+read in data, create contrast coding for two degraded flow conditions
+```{r data, include=FALSE}
+
+cs <- read.csv("../cleanData/csMLMdf.csv") %>%
+  select(id, condition, age, resID, CS)
+va <- read.csv("../cleanData/vaMLMdf.csv")%>%
+  select(id, condition, VA)
+
+pps <- as.list(unique(cs$id))
+
+d <- read.csv("../cleanData/mlmData.csv")%>%
+  select(-X, -contrastHigh)%>%
+  mutate(degraded = case_when(
+    contrast == "High" ~ -2/3,
+    TRUE ~ 1/3
+  ))%>%
+  mutate(lowContrast = case_when(
+    contrast == "High" ~ 0,
+    contrast == "Medium" ~ -1/2,
+    contrast == "Low" ~ 1/2
+  ))%>%
+  rename(id = Participant.Private.ID) %>%
+  filter(id %in% pps) # double check no extra particiapnts are in the data
+
+
+
+d <- left_join(d, cs, by = c("id", "condition"))
+d <- left_join(d, va, by = c("id", "condition"))
+
+d$id <- as.factor(d$id)
+d$contrast <- as.factor(d$contrast)
+d$resID <- as.factor(d$resID)
+
 ```
 
-## Including Plots
+create contrast coding for degraded flow states
+```{r contrasts}
+levels(d$contrast)
 
-You can also embed plots, for example:
+high_vs_degraded <- c(-2/3, 1/3, 1/3)
+low_vs_medium <- c(0, 1/2, -1/2)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+contrasts(d$contrast) <- cbind(high_vs_degraded, low_vs_medium)
+```
+import mlm packages
+```{r mlm packages}
+library(lme4)
+library(lmerTest)
+library(car)
+library(MASS)
+```
+quick look at distributions
+```{r dist plot}
+
+ggplot(d, aes(x = absAngError, group = contrast, color = contrast))+
+  geom_density()+
+  facet_grid(~condition)
+```
+let's start with gaussian distribution
+random intercept for particiapnts only
+```{r gaussian 1}
+gauError <- lmer(absAngError ~ (1|id),
+                 data = d)
+summary(gauError)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+add condition
+sig predictor, check with anova
+Better fit
+```{r gaussian 2}
+
+gauCond <- lmer(absAngError ~ condition + (1|id),
+                 data = d)
+
+summary(gauCond)
+anova(gauCond, gauError)
+```
+
+add main effect of contrast
+both contrasts have sig effect, double check with anova
+better fit
+```{r gaussian 3}
+
+gauFlow <- lmer(absAngError ~ condition + contrast + (1|id),
+                data = d)
+
+summary(gauFlow)
+anova(gauFlow, gauCond)
+```
+add condition*contrast interaction
+sig interaction
+sig better fit
+```{r gaussian 4}
+
+gauInt <- lmer(absAngError ~ condition*contrast + (1|id),
+                data = d)
+
+summary(gauInt)
+anova(gauInt, gauFlow)
+```
+
+add cs
+Not a sig predictor
+```{r gaussian 5, eval=FALSE}
+
+gauCS <- lmer(absAngError ~ condition + contrast + condition*contrast + CS + (1|id),
+                data = d)
+
+summary(gauCS)
+```
+
+add VA
+Not a sig predictor
+```{r gaussian 6, eval=FALSE}
+
+gauVA <- lmer(absAngError ~ condition + contrast + condition*contrast + VA + (1|id),
+                data = d)
+
+summary(gauVA)
+```
+
+add condition random slope
+slope SD is larger than main effect of condition, probs will improve fit. check with anova
+sig better fit
+```{r gaussian 7}
+gauSlope <- lmer(error.ts ~ condition + contrast + condition*contrast + (condition|id),
+                data = d)
+summary(gauSlope)
+anova(gauSlope, gauInt)
+
+gauFinal <- gauSlope 
+```
+
+last model - add random intercept for resID
+produces singularity and no variance in the intercepts. don't include.
+```{r gaussian 8, eval=FALSE}
+
+gauRes <- lmer(absAngError ~ condition + contrast + condition*contrast + (1|resID) + (condition|id),
+                data = d)
+summary(gauRes)
+
+```
+
+Now, let's try inverse Gaussian
+positive values only for invG and gamma. Add 1 to all absAngError values
+```{r transform error}
+d$absAngError.t <- d$absAngError+1
+
+d <- d %>%
+  dplyr::mutate(error.ts = scale(absAngError)+1)
+```
+
+model is nearly failing to converge, add optimiser
+scale error variable and make all variables positive
+
+```{r invG 1}
+
+invError <- glmer(error.ts ~ (1|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000)))
+summary(invError)
+
+```
+
+add condition
+sig predictor and sig better fit
+```{r invG 2}
+
+invCond <- glmer(error.ts ~ condition + (1|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000)))
+summary(invCond)
+anova(invCond, invError)
+```
+
+
+add contrast
+sig predictor, no main effect of condiiton - remove
+sig better fit
+```{r invG 3}
+
+invFlow <- glmer(error.ts ~ condition + contrast + (1|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000)))
+summary(invFlow)
+anova(invFlow, invCond)
+```
+
+add conditio* contrast interaction
+turns out this runs main effects too and the main effect of condition is back
+check anova
+sig better fit
+for Gamma make this the second model
+```{r invG 4}
+
+invInt <- glmer(error.ts ~ condition*contrast + (1|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000)))
+summary(invInt)
+anova(invInt, invFlow)
+```
+
+add CS
+small effect of CS, sig better predictor (just, p = .01)
+```{r invG 5}
+invCS <- glmer(error.ts ~ condition*contrast + CS + (1|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000)))
+summary(invCS)
+anova(invCS, invInt)
+
+invFinal <- invCS
+summary(invFinal)
+```
+
+add va
+no effect of VA, remove
+```{r invG 6, eval = F}
+invVA <- glmer(error.ts ~ condition*contrast + CS + VA + (1|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000)))
+
+summary(invVA)
+```
+
+add random slope for condition
+failed to converge
+is not singular
+gradient is approaching 0, remove
+```{r invG 7, eval=FALSE}
+
+d <- d %>%
+  mutate(CS.s = scale(CS)+3)
+invSlope <- glmer(error.ts ~ condition*contrast + CS + (condition|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 20000000)))
+
+summary(invSlope)
+
+# two methods to check singularity
+tt <- getME(invSlope,"theta")
+ll <- getME(invSlope,"lower")
+min(tt[ll==0]) # =.1, not singular
+isSingular(invSlope)
+
+derivs1 <- invSlope@optinfo$derivs
+sc_grad1 <- with(derivs1,solve(Hessian,gradient))
+max(abs(sc_grad1))
+
+max(pmin(abs(sc_grad1),abs(derivs1$gradient)))
+
+```
+
+
+add random intercept for resID
+Failed to converge, SD of resID intercepts approaching 0, exclude
+```{r invG 8, eval=FALSE}
+invRes <- glmer(error.ts ~ condition*contrast + CS + (1|resID) + (1|id),
+                  family = inverse.gaussian(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000)))
+
+summary(invRes)
+```
+
+
+let's try Gamma
+```{r gamma 1 }
+gammaError <- glmer(error.ts ~ (1|id),
+                  family = Gamma(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 20000000)))
+summary(gammaError)
+
+```
+
+add condition*contrast interaction
+all sig aand sig better fir
+```{r gamma 2}
+
+gammaInt <- glmer(error.ts ~ condition*contrast + (1|id),
+                  family = Gamma(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 20000000)))
+summary(gammaInt)
+anova(gammaError, gammaInt)
+```
+
+add CS
+sig predictor and sig better fit
+```{r gamma 3}
+
+gammaCS <- glmer(error.ts ~ condition*contrast + CS + (1|id),
+                  family = Gamma(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 20000000)))
+summary(gammaCS)
+anova(gammaCS, gammaInt)
+```
+
+add VA
+not a sig predictor, remove
+```{r gamma 4, eval=FALSE}
+
+gammaVA <- glmer(error.ts ~ condition*contrast + CS + VA + (1|id),
+                  family = Gamma(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 20000000)))
+summary(gammaVA)
+anova(gammaVA, gammaCS)
+```
+add random slope for condition
+failed to converge with Nelder_Mead, converged with bobyqa
+cs no longer a predictor, remove
+sig better fit
+```{r gamma 5}
+
+gammaSlope <- glmer(error.ts ~ condition*contrast + CS + (condition|id),
+                  family = Gamma(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 20000000)))
+summary(gammaSlope)
+anova(gammaSlope, gammaCS)
+
+gammaFinal <- gammaSlope
+```
+
+add random intercept for resID
+is singular, no sd for resID intercept, remove.
+```{r gamma 6, eval=FALSE}
+
+gammaRes <- glmer(error.ts ~ condition*contrast + (1|resID) + (condition|id),
+                  family = Gamma(link = "identity"),
+                 data = d, 
+         control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 20000000)))
+
+summary(gammaRes)
+```
+
+Let's compare these models
+```{r odel comparison}
+require(modelsummary)
+require(tibble)
+require(flextable)
+
+modelsummary(list("Gaussian" = gauFinal, "Inverse Gaussian" = invFinal, "Gamma" = gammaFinal),
+             stars = T,
+             title = "HP MLM output",
+             estimate = "{estimate} [{conf.low}, {conf.high}]{stars}",
+             statistic = "({std.error})",
+             shape = term ~ model + statistic, #statistics in separate columns
+             coef_rename = c("condition" = "Visual Condition",
+                             "contrasthigh_vs_degraded" = "Full v degraded flow",
+                             "contrastlow_vs_medium" = "Highly v slightly degraded flow",
+                             "SD (Intercept id)" = "SD(Participant ID intercept)",
+                             "SD (condition id)" = "SD(Slope Visual condition)")
+             
+             )
+```
