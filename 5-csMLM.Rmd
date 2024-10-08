@@ -1,0 +1,255 @@
+---
+title: "5-csMLM"
+author: "Will Sheppard"
+date: "2024-04-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+read in data 
+libraries
+This function takes a list of the required packages, checks if they are installed, downloads those that are not, and then loads them.
+
+```{r packages, warning=FALSE}
+
+requiredPackages = c("tidyverse", "quickpsy", "rstatix")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+read data 
+```{r read data}
+
+ofData <- read.csv("../savedData/ofClean.csv")
+ofPps <- unique(ofData$Participant.Private.ID)
+csAll <- read.csv("../savedData/csThreshold.csv")
+cs <- csAll %>%
+  filter(id %in% ofPps)
+demo <- read.csv("../savedData/demoData.csv")
+```
+
+lets check the distributions of CS data
+data is approaching normal and doesn't fit alternative distributions
+model with all 3 and cg=ompare fit
+```{r cs distribution}
+ggplot(cs, aes(x = cs, fill = condition))+
+  geom_density(alpha = 0.4)
+
+cs %>%
+  group_by(condition) %>%
+  shapiro_test(cs)
+```
+
+To identify the reserarcher, we need to identify the 3 unique combos of OS and monitor size
+```{r researcher id}
+
+resDF <- demo %>%
+  dplyr::select(Participant.Private.ID, Participant.OS, Participant.Monitor.Size) 
+
+resDF <- na.omit(resDF)
+  
+resDF <- resDF %>%
+  mutate(pcID = paste(Participant.OS, Participant.Monitor.Size)) %>%
+  mutate(resID = case_when(
+    pcID == "Windows 10 1536x864" ~ 1,
+    pcID == "Windows 10 1280x720" ~ 2,
+    pcID == "Mac OS 10.15.7 1440x900" ~ 3
+  )) %>%
+  dplyr::select(Participant.Private.ID, resID)%>%
+  rename(id = Participant.Private.ID)
+
+```
+
+Create a data frame containing participant id and their age
+```{r particiapnt age}
+
+age <- demo %>%
+  select(Participant.Private.ID, age_in_years) %>%
+  rename(id = Participant.Private.ID)
+
+```
+
+now we will join the three data frames on Participant id 
+revalue condition so that clear is 0 and blur is 1. the coefficient will down us the 'effect' of blur on va
+```{r join df}
+
+csAge <- left_join(cs, age)
+d <- left_join(csAge, resDF, by = "id") %>%
+  rename(age = age_in_years)%>%
+  mutate(condition = case_when(
+    condition == 'clear' ~ 0,
+    TRUE ~ 1
+  ))
+
+d$id <- as.factor(d$id)
+d$condition <- as.factor(d$condition)
+d$resID <- as.factor(d$resID)
+d$age.s <- as.numeric(scale(d$age))
+
+```
+
+```{r packages}
+
+requiredPackages = c("lme4", "lmerTest")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+lets start with the gaussian distribution
+
+
+cs ~ condition*age + (1|resID) + (condition|id) - too many random effects for for number of observations
+
+MAXIMAL MODEL: cs ~ condition*age + resID + (1|resID) + (1|id) 
+
+MINIMAL MODEL: cs ~ condition*age + (1|resID) + (1|id)
+```{r cs gausian mlm, eval=FALSE}
+
+# gauMax <- lmer(cs ~ condition*age + #FIXED
+#                  (1|resID) + (condition|id), #RANDOM
+#          data = d)
+
+# bobyqa - failed to converge
+# Nelder_Mead - failed ot converge
+# nloptwrap - failed ot converge
+# gauMax <- lmer(cs ~ condition*age.s + resID + #FIXED
+#                  (1|resID) + (1|id), #RANDOM
+#          data = d, 
+# #         control = lmerControl(optimizer = "nloptwrap", optCtrl = list(maxfun = 10000000))
+# )
+# summary(gauMax)
+
+# bobyqa - failed to converge
+# Nelder_Mead - failed ot converge
+# nloptwrap - failed ot converge
+# gauTwo <- lmer(cs ~ condition*age.s + resID + #FIXED
+#                  (1|id), #RANDOM
+#          data = d,
+#          control = lmerControl(optimizer = "nloptwrap", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(gauTwo)
+
+# bobyqa - converged. all results significant
+# Nelder_Mead - 
+# nloptwrap - 
+gauThree <- lmer(cs ~ condition + age.s + resID + #FIXED
+                 (1|id), #RANDOM
+         data = d, 
+         control = lmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 10000000))
+         )
+summary(gauThree)
+
+gauFinal <- gauThree
+```
+
+```{r inverse gausian}
+
+# control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000))
+# bobyqa - failed to converge
+# Nelder_Mead - failed to converge
+# nloptwrap - failed ot converge
+# invGauMax <- glmer(cs ~ condition*age.s + resID + #FIXED
+#                   (1|resID) + (1|id), #RANDOM
+#                 family = inverse.gaussian(link = "identity"),
+#                 data = d,
+#                 control = glmerControl(optimizer = "nloptwrap", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(invGauMax)
+
+# bobyqa - failed to converge
+# Nelder_Mead - converged. no sig interaction
+# nloptwrap - failed ot converge
+# invGauTwo <- glmer(cs ~ condition*age.s + resID +#FIXED
+#                   (1|id), #RANDOM
+#                 family = inverse.gaussian(link = "identity"),
+#                 data = d,
+#                 control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(invGauTwo)
+
+# bobyqa - failed to converge
+# Nelder_Mead - converged. no sig interaction
+# nloptwrap - failed ot converge
+invGauThree <- glmer(cs ~ condition + age.s + resID +#FIXED
+                  (1|id), #RANDOM
+                family = inverse.gaussian(link = "identity"),
+                data = d,
+                control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000))
+         )
+summary(invGauThree)
+
+invGauFinal <- invGauThree
+```
+
+```{r gamma}
+
+# bobyqa - singular
+# Nelder_Mead - singular
+# nloptwrap - singular
+# gammaMax <- glmer(cs ~ condition*age.s + resID + #FIXED
+#                   (1|resID) + (1|id), #RANDOM
+#                 family = Gamma(link = "identity"),
+#                 data = d,
+#                 control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(gammaMax)
+
+# bobyqa - 
+# Nelder_Mead - converged, no sig interaction
+# nloptwrap - 
+# gammaTwo <- glmer(cs ~ condition*age.s + resID + #FIXED
+#                   (1|id), #RANDOM
+#                 family = Gamma(link = "identity"),
+#                 data = d,
+#                 control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(gammaTwo)
+
+# bobyqa - 
+# Nelder_Mead - converged, no sig interaction
+# nloptwrap - 
+gammaThree <- glmer(cs ~ condition + age.s + resID + #FIXED
+                  (1|id), #RANDOM
+                family = Gamma(link = "identity"),
+                data = d,
+                control = glmerControl(optimizer = "Nelder_Mead", optCtrl = list(maxfun = 10000000))
+         )
+summary(gammaThree)
+
+gammaFinal <- gammaThree
+```
+
+
+```{r packages}
+
+requiredPackages = c("modelsummary", "tibble", "flextable")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+gamma as lowest BIC
+```{r model summary}
+
+modelsummary(list("Inverse Gaussian" = invGauFinal, "Gamma" = gammaFinal), 
+             stars = T, 
+             title = "CS MLM output",
+             estimate = "{estimate} [{conf.low}, {conf.high}]{stars}",
+             statistic = "({std.error})",
+             fmt = fmt_decimal(digits = 2, pdigits = 3),
+             shape = term ~ model + statistic, #statistics in separate columns
+             output = "csDistTable.html"
+             
+             )
+```

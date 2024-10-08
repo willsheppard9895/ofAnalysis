@@ -1,0 +1,66 @@
+---
+title: "4-demographicInfo"
+author: "Will Sheppard"
+date: "2024-04-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+ibraries
+This function takes a list of the required packages, checks if they are installed, downloads those that are not, and then loads them.
+
+```{r packages, warning=FALSE}
+
+requiredPackages = c("tidyverse", "rstatix")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+data_exp_62188-v20_questionnaire-e2l7
+```{r import data}
+
+ofData <- read.csv("../savedData/ofClean.csv")
+ofPps <- unique(ofData$Participant.Private.ID)
+demoAll <- read.csv("../studentData/studentDemographicsWideEdit.csv")
+demo <- demoAll %>%
+  filter(Participant.Private.ID %in% ofPps)
+```
+
+```{r demo info}
+
+## create summary measures
+demoSummary <- demo %>%
+  dplyr::summarise(minAge = min(age_in_years),
+                   maxAge = max(age_in_years),
+                   meanAge = round(mean(age_in_years),digits = 2) ,
+                   sdAge = round(sd(age_in_years), digits = 2),
+                   percFemale = round((2-mean(sex.quantised))*100, digits = 2),
+                   #education = which.max(education),
+                   percRight = round(100 - ((2-mean(Handedness.quantised))*100), digits = 2)
+                   )
+# most common educaitona level
+edu <- demo %>%
+  group_by(education)%>%
+  count()
+
+edu$perc <- round((edu$n/length(ofPps))*100, digits = 2)
+
+
+
+## how many os were used?
+unique(demo$Participant.OS)
+unique(demo$Participant.Monitor.Size)
+unique(demo[c("Participant.OS","Participant.Monitor.Size")])
+unique(demo[c("Participant.OS","Participant.Viewport.Size")])
+demo$Participant.Viewport.Size
+```
+
+```{r save data}
+
+write.csv(demo, "../savedData/demoData.csv")
+```

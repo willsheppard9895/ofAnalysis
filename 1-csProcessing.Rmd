@@ -1,0 +1,168 @@
+---
+title: "1-csProcessing"
+author: "Will Sheppard"
+date: "2024-04-18"
+output: html_document
+---
+5 particiapnts removed due to cs task
+
+1 participants is removed for repeatedly pressing "s" in response (in last script)
+4 participants removed for giving data that cannot be analysed
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+libraries
+This function takes a list of the required packages, checks if they are installed, downloads those that are not, and then loads them.
+
+```{r packages, warning=FALSE}
+
+requiredPackages = c("tidyverse", "quickpsy")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+read data 
+5384675 - removed due to responding letters not on in the task even at very high contrast
+```{r read data}
+data <- read.csv("../savedData/csSumm.csv") %>%
+  filter(id != 5384675)
+
+```
+
+
+The Bland-Altman analysis had the greatest levels of agreement when CS thresholds were estimated with a Weibull function and a 1/26 lapse rate. 
+```{r fit psychometric function}
+
+
+
+conditionList <- c("blur", "clear")
+funList <- "weibull_fun"
+denomList <- 26
+
+cols <- c("id",
+          "cs", "csLower", "csUpper",
+          "threshold", "threshLower", "threshUpper",
+          "percCorrect","fun", "guessRate",
+          "condition")
+
+
+
+for (cond in conditionList){
+
+  conditionData <- data %>%
+    filter(condition == cond)
+      
+      pplist <- unique(conditionData$id)
+      #pplist <- 1:10
+      
+      thresh <- data.frame(matrix(
+      data = NA,
+      nrow = length(pplist),
+      ncol = 11))
+      
+      colnames(thresh) <- cols
+
+      
+  for (fun in funList) {
+    for (denom in denomList) {
+      for (pp in  pplist){
+      
+          d <- conditionData %>%
+            filter(id == pp)
+        
+          
+          
+          g = 1/denom
+          p <- g + .5 * (1 - g)
+          
+          xMAX <- max(d$contrast)
+          xMIN <- min(d$contrast)
+          minPercCorr = min(d$percCorrect)
+          minContrast = min(d$contrast)
+          
+          print(paste("Participant:", pp, " ", cond, "", ", ", fun, "", ", Guess rate: 1/", denom, sep = ""))
+          
+          if (minPercCorr < p) {
+            if (fun == "logistic_fun"){
+              fitOne <- quickpsy(d = d, x = contrast, k = totalCorrect, n = totalAttempt,
+                             guess = g, lapses = TRUE, bootstrap = 'nonparametric',
+                             xmin = xMIN, xmax = xMAX, fun = logistic_fun)
+            }else if (fun == "cum_normal_fun"){
+              fitOne <- quickpsy(d = d, x = contrast, k = totalCorrect, n = totalAttempt,
+                             guess = g, lapses = TRUE, bootstrap = 'nonparametric',
+                             xmin = xMIN, xmax = xMAX, fun = cum_normal_fun)
+            }else if (fun == "weibull_fun"){
+              fitOne <- quickpsy(d = d, x = contrast, k = totalCorrect, n = totalAttempt,
+                             guess = g, lapses = TRUE, bootstrap = 'nonparametric',
+                             xmin = xMIN, xmax = xMAX, fun = weibull_fun)
+            }
+            
+            x <- plotcurves(fitOne)+
+            scale_x_continuous(limits = c(0, max(d$contrast)), breaks = seq(0, max(d$contrast), 1))+
+            scale_y_continuous(limits = c(0,1), breaks = seq(0, 1, 0.1))+
+            ggtitle(paste("pp: ", pp, " - ", fun, "guess rate 1/", denom))
+            show(x)
+          
+            thresh[which(pplist == pp), 1] <- pp
+            thresh[which(pplist == pp), 2] <- round(2 + log10(1/fitOne$thresholds[1]), digits = 2)
+            thresh[which(pplist == pp), 3] <- round(2 + log10(1/fitOne$thresholds[4]), digits = 2)
+            thresh[which(pplist == pp), 4] <- round(2 + log10(1/fitOne$thresholds[3]), digits = 2)
+            thresh[which(pplist == pp), 5] <- round(fitOne$thresholds[1], digits = 2)
+            thresh[which(pplist == pp), 6] <- round(fitOne$thresholds[3], digits = 2)
+            thresh[which(pplist == pp), 7] <- round(fitOne$thresholds[4], digits = 2)
+            thresh[which(pplist == pp), 8] <- fitOne$thresholds[2]
+            thresh[which(pplist == pp), 9] <- fun
+            thresh[which(pplist == pp), 10] <- 1/denom
+            thresh[which(pplist == pp), 11] <- cond
+            
+          } else{
+              thresh[which(pplist == pp), 1] <- pp
+              thresh[which(pplist == pp), 2] <- round(2 + log10(1/minContrast), digits = 2)
+              thresh[which(pplist == pp), 3] <- round(2 + log10(1/minContrast), digits = 2)
+              thresh[which(pplist == pp), 4] <- round(2 + log10(1/minContrast), digits = 2)
+              thresh[which(pplist == pp), 5] <- minContrast
+              thresh[which(pplist == pp), 6] <- minContrast
+              thresh[which(pplist == pp), 7] <- minContrast
+              thresh[which(pplist == pp), 8] <- p
+              thresh[which(pplist == pp), 9] <- fun
+              thresh[which(pplist == pp), 10] <- 1/denom
+              thresh[which(pplist == pp), 11] <- cond
+          }
+          
+        
+      }
+      assign(paste(fun, denom, "cs", cond, sep = ""), thresh)
+      }
+  
+}
+  
+}
+
+csThresh <- bind_rows(weibull_fun26csblur, weibull_fun26csclear)
+#colnames(csThresh) <- cols
+```
+	
+5496748 - clear
+5623534 - blur
+5549866 - blur
+```{r remove inf pps}
+
+ppsExclude <- c(5496748, 5623534, 5549866)
+
+csThresh <- csThresh %>%
+  filter(!id %in% ppsExclude)
+
+```
+
+
+
+save data
+```{r save cs data}
+
+write.csv(csThresh, "../savedData/csThreshold.csv")
+```

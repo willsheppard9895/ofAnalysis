@@ -1,0 +1,218 @@
+---
+title: "8-figures"
+author: "Will Sheppard"
+date: "2024-04-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, warning=FALSE}
+
+requiredPackages = c("tidyverse", "rstatix")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+```{r read data}
+
+d <- read.csv("../savedData/mlm.csv")
+```
+
+
+```{r csPlot}
+
+cols <- c('old' = 'black', 'young' = 'grey')
+shapes <- c('old' = 24, 'young' = 25)
+condLabs <- c("Monocular blur", "Full vision")
+
+csViolin <- d %>%
+  group_by(id, condition)%>%
+  summarise(cs = first(cs),
+            age = first(age))%>%
+  ggplot(aes(x = condition, y = cs))+
+  geom_violin(draw_quantiles = c(0.5)) +
+  geom_jitter(height = 0, width = 0.2, alpha = .6, aes(color = age, fill = age))+
+  scale_color_gradient(low = "black",
+                        high = "lightgrey")+
+  scale_fill_gradient(low = "black",
+                        high = "lightgrey")+
+  scale_x_discrete(labels = condLabs)+
+  scale_y_continuous(breaks = seq(1, 2, by = 0.2))+
+  labs(color = "Age (years)",
+       fill = "Age (years)")+
+  theme_bw()+
+  theme(#legend.title = element_blank(),
+        axis.title.x.bottom = element_blank())+
+  ylab("CS (logCS)")
+
+
+show(csViolin)
+```
+
+
+```{r vaPlot}
+cols <- c('old' = 'black', 'young' = 'grey')
+shapes <- c('old' = 24, 'young' = 25)
+condLabs <- c("Monocular blur", "Full vision")
+
+
+vaViolin <-  d %>%
+  group_by(id, condition)%>%
+  summarise(va = first(va),
+            age = first(age))%>%
+  ggplot(aes(x = condition, y = va)) +
+  geom_violin(draw_quantiles = c(0.5)) +
+  geom_jitter(height = 0, width = 0.2, alpha = .6, aes(color = age, fill = age))+
+  scale_color_gradient(low = "black",
+                        high = "lightgrey")+
+  scale_fill_gradient(low = "black",
+                        high = "lightgrey")+
+  scale_x_discrete(labels = condLabs)+
+  labs(color = "Age (years)",
+       fill = "Age (years)")+
+  theme_bw()+
+  theme(#legend.title = element_blank(),
+        axis.title.x.bottom = element_blank())+
+  ylab("VA (logMAR)")
+
+show(vaViolin)
+```
+
+plot full flow v degraded flow
+
+```{r degraded plot}
+
+lineType <- c("twodash", "solid")
+degTicks <- c("Degraded flow \n (collapsed across highly and slightly degraded flow)", "Full flow")
+
+degPlot <- d %>%
+  dplyr::select(id, condition, contrast, absAngError)%>%
+  mutate(degraded = case_when(
+    contrast == "FF" ~ "Full flow",
+    TRUE ~ "Degraded flow"
+  )) %>%
+  mutate(condition = case_when(
+    condition == "clear" ~ "Full vision",
+    TRUE ~ "Monocular blur"
+  ))%>%
+  group_by(
+    condition, degraded
+    )%>%
+  summarise(
+    mean = mean(absAngError),
+    sd = sd(absAngError)
+    )%>%
+  mutate(
+    se = sd/sqrt(length(unique(d$id)))
+         ) %>%
+  mutate(
+    min = mean - se,
+    max = mean + se
+  )%>%
+  ggplot(aes(x = degraded, y = mean, group = condition))+
+  stat_summary(fun = mean, geom = "point")+
+  stat_summary(fun = mean, geom = "line", aes(linetype = condition)) +
+  scale_y_continuous(name = "Absolute Error (degrees)",
+                     breaks = c(4, 6, 8, 10),
+                     limits = c(3, 11)) +
+  scale_linetype_manual(values = lineType,
+                     name = "Condition")  +
+  geom_errorbar(aes(ymin = min, ymax = max),
+                width=.1,
+                position=position_dodge(0.07))+
+  theme_bw()+
+  theme(axis.title.x = element_blank(),
+        legend.position = c(0.8, 0.8),
+        legend.background = element_blank())+ 
+  scale_x_discrete(labels=degTicks)
+  
+show(degPlot)
+```
+
+low contrat plot
+```{r lc plot}
+lineType <- c("twodash", "solid")
+
+lcPlot <- d %>%
+  dplyr::select(id, condition, contrast, absAngError)%>%
+  filter(contrast != "FF")%>%
+  mutate(contrast = case_when(
+    contrast == "HDF" ~ "Highly degraded flow",
+    contrast == "SDF" ~ "Slightly degraded flow"
+  ))%>%
+  mutate(condition = case_when(
+    condition == "clear" ~ "Full vision",
+    TRUE ~ "Monocular blur"
+  ))%>%
+  group_by(condition, contrast)%>%
+  summarise(mean = mean(absAngError),
+            sd = sd(absAngError))%>%
+  mutate(
+    se = sd/sqrt(length(unique(d$id)))
+         ) %>%
+  mutate(
+    min = mean - se,
+    max = mean + se
+  ) %>%
+  ggplot(aes(x = contrast, y = mean, group = condition))+
+  stat_summary(fun = mean, geom = "point") +
+  stat_summary(fun = mean, geom = "line", aes(linetype = condition))+
+  scale_y_continuous(name = "Absolute Error (degrees)",
+                     breaks = c(6, 8, 10, 12, 14),
+                     limits = c(4.5, 15.5))+
+  scale_linetype_manual(values = lineType,
+                     name = "Condition")  +
+  geom_errorbar(aes(ymin = min, ymax = max),
+                width=.1,
+                position=position_dodge(0.07))+
+  theme_bw()+
+  theme(axis.title.x = element_blank(),
+        legend.position = c(0.8, 0.8),
+        legend.background = element_blank())
+
+show(lcPlot)
+
+```
+
+```{r combine plots}
+require(ggpubr)
+
+arrPlots <- ggarrange(degPlot, lcPlot,
+          labels = c("A", "B"),
+          ncol = 1,
+          nrow = 2)
+
+show(arrPlots)
+
+```
+
+```{r save plots, eval=FALSE}
+
+dpi = 800
+h = 4
+w = 7
+
+ggsave("../figures/csViolin.png",
+       plot = csViolin,
+       dpi = dpi,
+       height = h,
+       width = w)
+
+ggsave("../figures/vaViolin.png",
+       plot = vaViolin,
+       dpi = dpi,
+       height = h,
+       width = w)
+
+ggsave("../figures/arrangedPlot.png",
+       plot = arrPlots,
+       dpi = dpi,
+       height = 2*h,
+       width = w)
+```

@@ -1,0 +1,349 @@
+---
+title: "0-dataImport"
+author: "Will Sheppard"
+date: "2024-04-18"
+output: html_document
+---
+
+THROUGHOUT THIS SCRIPT I USE "OF" AS SHORT HAND FOR OPTIC FLOW AS THIS WAS THE NAME OF THE TASK WHEN I WROTE THE SCRIPTS INITIALLY
+
+YOU CAN RUN THE SCRIPT AS A WHOLE AND THE INDIVIDUAL DATA FRAMES WILL BE GENERATED, BUT YOU WILL NEED TO GO THROUGH AND RUN THE SAVE CHUNKS MANUALLY. THIS IS TO STOP ACCIDENTAL OVER SAVING
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+libraries
+This function takes a list of the required packages, checks if they are installed, downloads those that are not, and then loads them.
+
+```{r packages, warning=FALSE}
+
+requiredPackages = c("tidyverse", "rstatix")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+import some custom funcitons that i have written to work with the vision tests
+```{r funcitons}
+
+# import functions
+source('functions_visionProcessing_and_threshEstimation.R')
+```
+
+task contains oex3
+
+```{r import task data}
+
+# create list of file names
+files <- c("task-d4fw", "task-dqjp", "task-f3ud", "task-mva3", "task-oex3",
+           "task-og71", "task-rek9", "task-s8ch", "task-svji", "task-z5dj")
+for(i in files){
+  filepath <- file.path("../data/",paste("data_exp_62188-v20_",i,".csv",sep=""))
+  assign(i, read.csv(filepath))
+}
+
+# make reaction time variables numeric
+`task-d4fw`$Reaction.Time <- as.numeric(`task-d4fw`$Reaction.Time)
+`task-d4fw`$X.Coordinate <- as.numeric(`task-d4fw`$X.Coordinate)
+`task-d4fw`$Y.Coordinate <- as.numeric(`task-d4fw`$Y.Coordinate)
+`task-d4fw`$Timed.Out <- as.numeric(`task-d4fw`$Timed.Out)
+
+taskData <- bind_rows(`task-d4fw`, `task-dqjp`, `task-f3ud`, `task-mva3`, `task-oex3`,
+                     `task-og71`, `task-rek9`,`task-svji`, `task-z5dj`)
+
+# remove gaps from column names
+names(taskData) <- make.names(names(taskData), unique = TRUE)
+
+# remove participant 5384850 - not sure which condition is which
+# leaves n of 59
+taskData <- taskData %>%
+  filter(Participant.Private.ID != 5384850)
+
+# create a condition column 
+taskData <- taskData %>%
+  mutate(condition = case_when(
+    Response == "Monocular blur" ~ "blur",
+    Response == "No blur" ~ "clear"
+  ))
+# fill column with condition above
+taskData <- taskData %>% fill(condition)
+
+allTasks <- taskData
+```
+
+let's save this out for future use
+```{r save all data, eval=FALSE}
+
+write.csv(allTasks, "../savedData/allTask.csv")
+
+```
+
+
+Now, let's seperate the heading data and calculate click angle
+```{r seperate heading data}
+
+# select data for ofTest and ofCalibrate
+ofTasks <- c("ofTest", "ofCalibrate")
+responseZones <- c("response_button_text", "response_text_entry", "click_painting")
+
+ofAllData <- allTasks %>%
+  filter(display %in% ofTasks) %>%
+  filter(Zone.Type %in% responseZones)%>%
+  filter(Response != "click limit reached")
+
+## Calculate angle to the centre for all data points
+# create center height variable
+centerHeight <- 255
+
+ofAllData <- ofAllData %>%
+  mutate(centerDist = X.Coordinate - 320)%>%
+  mutate(centerAng = atan(centerDist/centerHeight)*(180/pi))
+```
+
+Seperate the calibration data
+```{r seperate calibration data}
+## select ofCalibrate data
+allOfCalibrate <- ofAllData %>%
+  filter(display == "ofCalibrate")
+
+# select columns
+ofCalibrate <- allOfCalibrate %>%
+  select(Participant.Private.ID, condition, randomise_trials, cross, X.Coordinate, centerDist, centerAng)
+
+# read in calibration target location spreadsheets
+calibTargets <- read_csv("../calibrationTargets.csv")
+
+# create new column with angle to center
+calibTargets <- calibTargets %>%
+  mutate(targetCenterAng = atan(centerDist/Y.Coordinate)*(180/pi))
+
+
+# add new column matching target angle to cross
+ofCalibrate <- ofCalibrate %>%
+  mutate(targetCenterAng = case_when(
+    cross == calibTargets$cross[1] ~ calibTargets$targetCenterAng[1],
+    cross == calibTargets$cross[2] ~ calibTargets$targetCenterAng[2],
+    cross == calibTargets$cross[3] ~ calibTargets$targetCenterAng[3],
+    cross == calibTargets$cross[4] ~ calibTargets$targetCenterAng[4],
+    cross == calibTargets$cross[5] ~ calibTargets$targetCenterAng[5]
+  )) %>%
+  mutate(angDiff = abs(targetCenterAng - centerAng))
+
+```
+
+check if any particiapnts need excluding based upon their calibration score
+- this happens for both the still and moving calibration tasks
+- refer to moving calibrations as "practice"
+
+These participants performance in the main task will be checking script 3. if their performance is sig worse than the mean, they will be removed.
+```{r check calibation exclusion}
+
+# By particiapnt and condition, look at mean error
+ofCalibrateSummary <- ofCalibrate %>%
+  group_by(Participant.Private.ID, condition)%>%
+  summarise(meanError = mean(angDiff))
+
+calibEx <- mean(ofCalibrateSummary$meanError)+2*sd(ofCalibrateSummary$meanError)
+
+ofCalibrateExclude <- ofCalibrateSummary %>%
+  filter(meanError > calibEx)%>%
+  group_by(Participant.Private.ID)%>%
+  summarise(count = n())%>%
+  filter(count == 2)
+
+###### Now analyse second practice data
+# create list of practice videos
+practiceVids <- c("40.mp4", "40right.mp4")
+
+allOfPractice <- ofAllData %>%
+  filter(video %in% practiceVids)
+
+allOfPractice <- allOfPractice %>%
+  mutate(targetCenterAng = case_when(
+    video == "40.mp4" ~ -40,
+    video == "40right.mp4" ~ 40
+  )) %>%
+  mutate(angDiff = abs(targetCenterAng - centerAng))
+
+# create summary measures
+ofPracticeSummary <- allOfPractice %>%
+  group_by(Participant.Private.ID, condition)%>%
+  summarise(meanError = mean(angDiff))
+
+pracEx <- mean(ofPracticeSummary$meanError)+2*sd(ofPracticeSummary$meanError)
+
+ofPracticeExclude <- ofPracticeSummary %>%
+  filter(meanError > pracEx)%>%
+  group_by(Participant.Private.ID)%>%
+  summarise(count = n())%>%
+  filter(count == 2)
+
+# create lists of participants to exclude
+calibExcludeList <- ofCalibrateExclude$Participant.Private.ID
+pracExcludeList <- ofPracticeExclude$Participant.Private.ID
+excludeList <- unique(c(calibExcludeList, pracExcludeList))
+
+# how many people did we exclude?
+print(paste("We may exclude ", length(excludeList), " participants", sep = ""))
+
+# filter data removing excluded participats
+# ofFiltData <- ofAllData %>%
+#   filter(!Participant.Private.ID %in% excludeList)
+```
+
+
+here, we create a list of videos that were used to in the main heading perception task
+
+We will also create a list of the remaining pps in the heading task. this can be used to help filter participants later on
+```{r seperate heading perception data}
+
+# create list of videos to exclude
+exVids <- c("40.mp4", "40right.mp4", "")
+
+ofMain <- ofAllData %>%
+  filter(!video %in% exVids)
+
+# create target, signed error, absolute error, offset and contrast variables
+allOfMain <- ofMain %>%
+  mutate(contrast = case_when(
+    str_detect(video, "^50*") ~ 50,
+    str_detect(video, "^90*") ~ 10,
+    TRUE ~ 100
+  )) %>%
+  mutate(offset = case_when(
+    str_detect(video, "4.mp4$") ~ -4, str_detect(video, "4right.mp4$") ~ 4,
+    str_detect(video, "8.mp4$") ~ -8, str_detect(video, "8right.mp4$") ~ 8,
+    str_detect(video, "12.mp4$") ~ -12, str_detect(video, "12right.mp4$") ~ 12,
+    str_detect(video, "16.mp4$") ~ -16, str_detect(video, "16right.mp4$") ~ 16,
+    str_detect(video, "20.mp4$") ~ -20, str_detect(video, "20right.mp4$") ~ 20,
+    TRUE ~ 0
+  )) %>%
+  mutate(angError = centerAng-offset)%>%
+  mutate(absAngError = abs(angError))
+
+# create a  list of remaining participants in optic flow
+ofPps <- unique(ofMain$Participant.Private.ID)
+
+```
+
+let's save this out for future use
+```{r save heading perception task data, eval=FALSE}
+
+write.csv(allOfMain, "../savedData/allOfMain.csv")
+write.csv(ofPPs, "../savedData/allOfMain.csv")
+
+```
+
+extract the cs and va data from the general task data frame
+```{r seperate vision Data}
+
+# create variable with Zone.Name s of inerest
+zones <- c("response_button_text", "response_text_entry", "click_painting")
+
+# filter data into individual data sets for cs, va and of
+csAllData <- allTasks %>%
+  filter(Zone.Type %in% zones)%>%
+  filter(display == "cs") 
+
+vaAllData <- allTasks %>%
+  filter(Zone.Type %in% zones)%>%
+  filter(display == "va")
+```
+
+create summary data frames for modelling
+"blur"  "clear"
+```{r process cs data}
+
+## Process cs Data
+
+# select columns of interest
+csData <- csAllData %>%
+  select(Participant.Private.ID, condition, Screen.Name, Attempt, Correct, Reaction.Time)%>%
+  rename(id = Participant.Private.ID)
+
+
+# 5372572- spamming the same key on blur CS - remove
+csData <- csData %>%
+  filter(id != 5372572)
+csPps <- unique(csData$id)
+
+csBlurData <- csData %>%
+  filter(condition == "blur")
+csClearData <- csData %>%
+  filter(condition == "clear")
+
+csBlurShort <- shortenCS(csBlurData)
+csBlurSumm <- summShortCS(csBlurShort)
+csBlurSumm$condition <- "blur"
+
+csClearShort <- shortenCS(csClearData)
+csClearSumm <- summShortCS(csClearShort)
+csClearSumm$condition <- "clear"
+
+csSumm <- bind_rows(csBlurSumm, csClearSumm)
+```
+
+```{r save csSumm, eval=FALSE}
+
+write.csv(csSumm, "../savedData/csSumm.csv")
+```
+
+```{r process va data}
+
+## Process va Data
+
+# select columns of interest
+vaData <- vaAllData %>%
+  select(Participant.Private.ID, condition,Screen.Name, Attempt, Correct, Reaction.Time)%>%
+  rename(id = Participant.Private.ID)
+
+vaPps <- unique(vaData$id)
+
+
+vaBlurData <- vaData %>%
+  filter(condition == "blur")
+vaClearData <- vaData %>%
+  filter(condition == "clear")
+
+vaBlurShort <- shortenVA(vaBlurData)
+vaBlurSumm <- summShortVA(vaBlurShort)
+vaBlurSumm$condition <- "blur"
+
+vaClearShort <- shortenVA(vaClearData)
+vaClearSumm <- summShortVA(vaClearShort)
+vaClearSumm$condition <- "clear"
+
+vaSumm <- bind_rows(vaBlurSumm, vaClearSumm)
+```
+
+```{r save vaSumm, eval=FALSE}
+
+write.csv(vaSumm, "../savedData/vaSumm.csv")
+```
+
+```{r check all participants are the same}
+
+visionPps <- intersect(csPps, vaPps)
+pps <- intersect(ofPps, visionPps)
+
+ofOut <- allOfMain %>%
+  filter(Participant.Private.ID %in% pps)
+csOut <- csSumm %>%
+  filter(id %in% pps)
+vaOut <- vaSumm %>%
+  filter(id %in% pps)
+
+```
+
+
+```{r save all data, eval=FALSE}
+
+write.csv(excludeList, "../savedData/ofPoorCalibPPs.csv")
+write.csv(ofOut, "../savedData/allOfMain.csv")
+write.csv(pps, "../savedData/pps.csv")
+write.csv(csOut, "../savedData/csSumm.csv")
+write.csv(vaOut, "../savedData/vaSumm.csv")
+```

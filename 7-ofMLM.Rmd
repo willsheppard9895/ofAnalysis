@@ -1,0 +1,247 @@
+---
+title: "7-ofMLM"
+author: "Will Sheppard"
+date: "2024-04-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages, warning=FALSE}
+
+requiredPackages = c("tidyverse", "quickpsy", "rstatix")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+read data 
+```{r read data}
+
+ofData <- read.csv("../savedData/ofClean.csv")
+ofPps <- unique(ofData$Participant.Private.ID)
+vaAll <- read.csv("../savedData/vaThreshold.csv")
+va <- vaAll %>%
+  filter(id %in% ofPps)
+csAll <- read.csv("../savedData/csThreshold.csv")
+cs <- csAll %>%
+  filter(id %in% ofPps)
+demo <- read.csv("../savedData/demoData.csv")
+```
+
+quite a long tail. may be inv g or gamma
+not normally distributed
+model using inv g or gamma
+```{r of distribution}
+ggplot(ofData, aes(x = absAngError, fill = condition))+
+  geom_density(alpha = 0.4)
+
+ofData %>%
+  group_by(Participant.Private.ID, condition, contrast, offset) %>%
+  summarise(error = mean(absAngError))%>%
+  ungroup()%>%
+  group_by(condition, contrast, offset) %>%
+  shapiro_test(error)
+```
+
+To identify the reserarcher, we need to identify the 3 unique combos of OS and monitor size
+```{r researcher id}
+
+resDF <- demo %>%
+  dplyr::select(Participant.Private.ID, Participant.OS, Participant.Monitor.Size) 
+
+resDF <- na.omit(resDF)
+  
+resDF <- resDF %>%
+  mutate(pcID = paste(Participant.OS, Participant.Monitor.Size)) %>%
+  mutate(resID = case_when(
+    pcID == "Windows 10 1536x864" ~ 1,
+    pcID == "Windows 10 1280x720" ~ 2,
+    pcID == "Mac OS 10.15.7 1440x900" ~ 3
+  )) %>%
+  dplyr::select(Participant.Private.ID, resID)%>%
+  rename(id = Participant.Private.ID)
+
+```
+
+Create a data frame containing participant id and their age
+```{r particiapnt age}
+
+age <- demo %>%
+  select(Participant.Private.ID, age_in_years) %>%
+  rename(id = Participant.Private.ID)
+
+```
+
+now we will join the three data frames on Participant id 
+revalue condition so that clear is 0 and blur is 1. the coefficient will down us the 'effect' of blur on va
+```{r join df}
+
+va <- va %>%
+  select(id, va, condition)
+
+cs <- cs %>%
+  select(id, cs, condition)
+
+vision <- left_join(cs, va)
+
+visionAge <- left_join(vision, age)
+
+extraDf <- left_join(visionAge, resDF, by = "id") %>%
+  rename(age = age_in_years)
+
+
+of <- ofData %>%
+  rename(id = Participant.Private.ID) %>%
+  select(id, condition, contrast, absAngError)
+
+d <- left_join(of, extraDf, by = c("id", "condition"))%>% 
+  mutate(contrast = case_when(
+    contrast == 100 ~ "FF",
+    contrast == 50 ~ "SDF",
+    contrast == 10 ~ "HDF"
+  ))
+
+d$id <- as.factor(d$id)
+d$condition <- as.factor(d$condition)
+d$resID <- as.factor(d$resID)
+d$contrast <- as.factor(d$contrast)
+d$age.s <- as.numeric(scale(d$age)+3)
+d$cs.s <- as.numeric(scale(d$cs)+3)
+d$va.s <- as.numeric(scale(d$va)+3)
+d$absAngError.t <- d$absAngError+1
+d$absAngError.s <- as.numeric(scale(d$absAngError)+3)
+
+
+levels(d$condition)
+
+clear_v_blur <- c(1/2, -1/2)
+
+contrasts(d$condition) <- cbind(clear_v_blur)
+
+levels(d$contrast)
+
+high_vs_degraded <- c(-2/3, 1/3, 1/3)
+low_vs_medium <- c(0, 1/2, -1/2)
+
+contrasts(d$contrast) <- cbind(high_vs_degraded, low_vs_medium)
+
+```
+
+```{r packages}
+
+requiredPackages = c("lme4", "lmerTest")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+MAXIMAL MODEL: absAngError ~ age.s + cs.s + va.s + resID + condition*contrast + #FIXED
+                  (condition|id) + (1|resID) #RANDOM
+                  
+                  
+MINIMAL MODEL: absAngError ~ age.s + cs.s + va.s + resID + condition*contrast + #FIXED
+                  (1|id) #RANDOM
+
+inverse gausian
+```{r invGau mlm}
+
+# bobyqa - SINGULAR. resID intercept has the lowest variance associated with it. remove
+# Nelder_Mead - 
+# nloptwrap - 
+# invGauMax <- glmer(absAngError ~ age.s + cs.s + va.s + resID + condition*contrast + #FIXED
+#                      (condition|id) + (1|resID), #RANDOM
+#                 family = inverse.gaussian(link = "identity"),
+#                 data = d,
+#                 control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(invGauMax)
+
+# bobyqa - Failed ot converge
+# Nelder_Mead - failed to converge
+# nloptwrap - 
+# invGauTwo <- glmer(absAngError ~ age.s + cs.s + va.s + resID + condition*contrast + #FIXED
+#                      (condition|id), #RANDOM
+#                 family = inverse.gaussian(link = "identity"),
+#                 data = d,
+#                 control = glmerControl(optimizer = "nloptwrap", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(invGauTwo)
+
+# bobyqa - 
+# Nelder_Mead - 
+# nloptwrap - 
+invGauThree <- glmer(absAngError.t ~ age.s + cs.s + va.s + resID + condition*contrast + #FIXED
+                     (1|id), #RANDOM
+                family = inverse.gaussian(link = "identity"),
+                data = d,
+                control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 10000000))
+         )
+summary(invGauThree)
+
+invGauFinal <- invGauThree
+```
+
+gamma
+```{r gamma MLM}
+
+# bobyqa - SINGULAR. resID intercept has the lowest variance associated with it. remove
+# Nelder_Mead - 
+# nloptwrap - 
+# gammaMax <- glmer(absAngError.t ~ age.s + cs.s + va.s + resID + condition*contrast + #FIXED
+#                      (condition|id) + (1|resID), #RANDOM
+#                 family = Gamma(link = "identity"),
+#                 data = d,
+#                 control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 10000000))
+#          )
+# summary(gammaMax)
+
+# bobyqa - converged
+# Nelder_Mead - 
+# nloptwrap - 
+gammaTwo <- glmer(absAngError.t ~ age.s + cs.s + va.s + resID + condition*contrast + #FIXED
+                     (condition|id), #RANDOM
+                family = Gamma(link = "identity"),
+                data = d,
+                control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 10000000))
+         )
+summary(gammaTwo)
+
+gammaFinal <- gammaTwo
+```
+
+```{r packages}
+
+requiredPackages = c("modelsummary", "tibble", "flextable")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+gamma as lowest BIC
+```{r model summary}
+
+modelsummary(list("Inverse Gaussian" = invGauFinal, "Gamma" = gammaFinal), 
+             stars = T, 
+             title = "HP MLM output",
+             estimate = "{estimate} [{conf.low}, {conf.high}]{stars}",
+             statistic = "({std.error})",
+             fmt = fmt_decimal(digits = 2, pdigits = 3),
+             shape = term ~ model + statistic, #statistics in separate columns
+             output = "hpDistTable.html"
+             )
+```
+
+save data out to make graphs
+```{r save data}
+
+write.csv(d, "../savedData/mlm.csv")
+```

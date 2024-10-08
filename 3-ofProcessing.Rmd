@@ -1,0 +1,159 @@
+---
+title: "3-ofProcessing"
+author: "Will Sheppard"
+date: "2024-04-18"
+output: html_document
+---
+
+4 participants with visual conditions were removed as they performed sig worse than the other participants
+Of the 3 participants identified as poor in practce, 2 have already been removed and the remaining 1 had sig higher error so was removed.
+
+TOTAL OF 5 PPS REMOVED
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+read in data 
+libraries
+This function takes a list of the required packages, checks if they are installed, downloads those that are not, and then loads them.
+
+```{r packages, warning=FALSE}
+
+requiredPackages = c("tidyverse", "quickpsy")
+for(p in requiredPackages){
+  if(!require(p,character.only = TRUE)) install.packages(p)
+  library(p,character.only = TRUE)
+}
+
+```
+
+read data 
+```{r read data}
+csData <- read.csv("../savedData/csThreshold.csv")
+vaData <- read.csv("../savedData/vaThreshold.csv")
+ofDataAll <- read.csv("../savedData/allOfMain.csv")
+#poorCalibPps <- as.list(read.csv("../savedData/ofPoorCalibPPs.csv"))
+poorCalibPps <- c(5722070, 5372572, 5384675)
+```
+
+we lost 2 participants in cs data processing. double check that all participants line up across the tasks
+```{r check all participants are the same}
+
+csPps <- unique(csData$id)
+vaPps <- unique(vaData$id)
+
+visionPps <- intersect(csPps, vaPps)
+
+
+ofPpsData <- ofDataAll %>%
+  filter(Participant.Private.ID %in% visionPps)
+
+```
+
+as there are 4 particiapnts with visual conditions that may need to be removed, we will start with a 'gentle' approach to cleaning where we will only remove outliers for specific conditions - group by id, conditions, contrast and offset
+```{r remove outliers}
+
+
+# moving through 4 layers of filtering to get rid of outliers. 
+# first remove general outliers
+# then get rid of outliers on the individual level (no task component)
+# get rid of outliers on a task level (no indivisual component)
+# get rid of any remaining outliers on a micro level
+ofOutData <- ofPpsData %>% 
+  # mutate(outlier = is_outlier(absAngError))%>% # create logical markers for general outliers. this will get rid of the very extreme points
+  # mutate(outlier = as.numeric(outlier))%>%
+  # filter(outlier == 0)%>%
+  # group_by(Participant.Private.ID)%>% # this should catch any very strange behaviours at an individual level
+  # mutate(outlier = is_outlier(absAngError))%>% # 
+  # mutate(outlier = as.numeric(outlier))%>%
+  # filter(outlier == 0)%>%
+  # group_by(condition, contrast, offset)%>% # this will catch strange behaviours at a task level
+  # mutate(outlier = is_outlier(absAngError))%>%
+  # mutate(outlier = as.numeric(outlier))%>%
+  # filter(outlier == 0) %>%
+  group_by(Participant.Private.ID, condition, contrast, offset)%>% # this will catch strange behaviours al the microlevel
+  mutate(outlier = is_outlier(absAngError))%>%
+  mutate(outlier = as.numeric(outlier))%>%
+  filter(outlier == 0) %>%
+  ungroup()
+
+nrow(ofOutData)/nrow(ofPpsData)
+```
+
+```{r check visual conditions}
+
+## Check participants with medical condition vs general trend
+# 5508881 - cataracts
+# 5532853 - Deuteranopia (color blind)
+# 5540429 - had cataract, still has film over left eye
+# 5658787 - Diabetic Retinopathy
+visProbs <- c(5508881, 5532853, 5540429, 5658787)
+
+# create data frame where participants with visual issues are marked
+probData <- ofOutData %>%
+  mutate(prob = case_when(
+    Participant.Private.ID %in% visProbs ~ 1,
+    TRUE ~ 0
+  ))
+# look at descriptive stats for the groups
+library(rstatix)
+
+# obviously higher
+probData %>%
+  group_by(prob) %>%
+  get_summary_stats(absAngError, type = "mean_sd")
+
+# calculate t score
+prob.test <- probData %>%
+  t_test(absAngError ~ prob) %>%
+  add_significance()
+prob.test
+
+# participants with self reported visual problems had a sig. higher absAngError
+# therefore remove
+ofOutData <- subset(ofOutData, !(Participant.Private.ID %in% visProbs))
+
+# create a  list of remaining participants in optic flow
+#ofPps <- unique(ofOutData$Participant.Private.ID)
+```
+
+
+check the performance of poor calibration pps compared to the remaining pps 
+poorCalibPps
+```{r poor calib pps}
+
+# create data frame where participants with visual issues are marked
+calibData <- ofOutData %>%
+  mutate(calib = case_when(
+    Participant.Private.ID %in% poorCalibPps ~ 1,
+    TRUE ~ 0
+  ))
+
+# obviosuly worse
+calibData %>%
+  group_by(calib) %>%
+  get_summary_stats(absAngError, type = "mean_sd")
+
+# calculate t score
+prob.test <- calibData %>%
+  t_test(absAngError ~ calib) %>%
+  add_significance()
+prob.test
+
+exPps <- calibData %>% 
+  filter(calib == 1)
+length(unique(exPps$Participant.Private.ID))
+
+ofOutData <- subset(ofOutData, !(Participant.Private.ID %in% poorCalibPps))
+
+
+```
+
+save data
+```{r save all data, eval=FALSE}
+
+
+write.csv(ofOutData, "../savedData/ofClean.csv")
+
+```

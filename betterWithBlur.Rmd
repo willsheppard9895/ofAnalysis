@@ -40,7 +40,21 @@ lensData <- allLensData%>%
 
 joinedDF <- full_join(demo, lensData)
 joinedDF <- full_join(d, joinedDF)
+
 monoFirst <- joinedDF %>%
-  filter(Response == 'Monocular blur')
+  ungroup() %>%
+  filter(Response == 'Monocular blur') %>%
+  summarise(n = length(unique(Participant.Private.ID)),
+            age = mean(age_in_years),
+            edu = names(which.max(table(education)))
+            )
+
+fullFirst <- joinedDF %>%
+  ungroup() %>%
+  filter(Response == 'No blur')%>%
+  summarise(n = length(unique(Participant.Private.ID)),
+            age = mean(age_in_years),
+            edu = names(which.max(table(education)))
+            )
 
 ```
